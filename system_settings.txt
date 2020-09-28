@@ -1,9 +1,10 @@
 {
-    "system_type": "decentralized",
+    "system_type": "centralized",
     "group_size": 2,
     "max_interaction_length": 200,
-    "path_agent_files": "d_pdt_agent_info_files",
-    "path_shared_secrets": "d_pdt_shared_secret_files",
-    "path_neuralnet_models": "d_pdt_agent_neuralnet_models",
-    "path_secret_neuralnets": "d_pdt_secret_neuralnet_models"
+    "central_server_group_id": 0,
+    "path_agent_files": "c_pdt_agent_info_files",
+    "path_shared_secrets": "c_pdt_shared_secret_files",
+    "path_neuralnet_models": "c_pdt_agent_neuralnet_models",
+    "path_secret_neuralnets": "c_pdt_secret_neuralnet_models"
 }

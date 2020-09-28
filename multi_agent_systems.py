@@ -16,6 +16,278 @@ import random, torch
 import time
 from datetime import datetime
 
+class LocalSystem(object):
+    """Multi-agent system which lives entirely on local machine."""
+
+    def __init__(self,system):
+        """Create local system, either centralized or decentralized."""
+        self.system = system
+        self.system_type = system.system_type
+        self.max_interaction_length = system.max_interaction_length
+        self.group_size = system.group_size
+
+    def local_interaction(self):
+        """Perform interaction process between all agents locally."""
+        raise NotImplementedError("System must implement local interaction.")
+
+    def authenticate(self):
+        """Have all agents perform authentication of others."""
+        raise NotImplementedError("System must implement agent authentication.")
+
+    def setup_session_key(self):
+        """Have all agents create (or receive) group session key."""
+        raise NotImplementedError("System must implement group session key.")
+
+class CentralizedLocalSystem(LocalSystem):
+    """Centralized multi-agent system which lives on local machine."""
+
+    def __init__(self,system):
+         # Use parent constructor
+        super(CentralizedLocalSystem, self).__init__(system)
+
+        # Store variables
+        self.central_server_group_id = system.central_server_group_id
+
+    def local_interaction(self):
+        """Perform interaction process among all agents locally."""
+
+        # Define variables
+        group_interaction_history = []
+        current_time = 0
+        cs_gid = self.central_server_group_id
+
+        # Build interaction history
+        while(current_time < self.max_interaction_length):
+            #print("\ncurrent_time: ", current_time)
+
+            group_current_decisions = [-1 for x in range(self.group_size)]
+            # example group_current_decisions: [[-1,s_a1,s_a2], a1, a2]
+
+            # Get current action from each agent
+            for l in range(self.group_size):
+
+                # Get sublist of group actions from previous timestep
+                if current_time == 0:
+                    group_prev_decisions = []
+
+                    # Agent's slice from history is just empty list also
+                    prev_decisions = group_prev_decisions
+
+                else:
+                    # Properly format history slice as per type of agent
+
+                    group_prev_decisions = group_interaction_history[-1][:] # shallow copy
+
+                    # Build input depending on agent type
+                    if l == cs_gid:
+
+                        # Central server takes input as: [[-1, s_a1, s_a2], a1, a2]
+                        prev_decisions = group_prev_decisions[:]
+
+                    else:
+
+                        # Other agents take input as: [s_a1, a1, -1] for example
+                        cs_prev_action = group_prev_decisions[cs_gid][l] # i.e. 's_a1'
+
+                        agent_prev_action = group_prev_decisions[l] # i.e. 'a1'
+
+                        prev_decisions = [-1 for x in range(self.group_size)]
+
+                        prev_decisions[cs_gid] = cs_prev_action
+
+                        prev_decisions[l] = agent_prev_action
+
+                # Now get agent output from formatted input
+                agent_current_decision = self.system.agents_list[l].local_interact(
+                                                                    current_time,
+                                                                    prev_decisions)
+                """
+                If agent is central server, agent_current_decision is sublist:
+                    [-1, s_a1, s_a2], for example
+
+                Else, agent_current_decision is single action:
+                    'a1', for example
+                """
+
+                # Update group current decisions for this agent
+                group_current_decisions[l] = agent_current_decision
+                # example group_current_decisions: [[-1, s_a1, s_a2], a1, a2]
+
+            # Update group interaction history with all agent decisions
+            group_interaction_history.append(group_current_decisions[:])
+
+            # Update time counter
+            current_time += 1
+
+        # After while loop, check group H_t
+        print("\ngroup_interaction_history: ", group_interaction_history)
+
+        # After interaction process, update each agent's group interaction history
+        for l in range(self.group_size):
+
+            if l == cs_gid:
+
+                # Central server stores its H_t as: [[[-1, s_a1, s_a2], a1, a2],...]
+                cs_history = group_interaction_history[:]
+
+                self.system.agents_list[l].set_group_interaction_history(cs_history)
+
+            else:
+                # Other agents store their H_t as: [[s_a1,a1,-1],...] for example
+                
+                # Build central server actions as: [s_a1 (t=0), s_a1 (t=1),...] for example
+                cs_actions = [x[cs_gid][l] for x in group_interaction_history]
+
+                # Build agent actions as: [a1 (t=0), a1 (t=1),...] for example
+                agent_actions = [x[l] for x in group_interaction_history]
+
+                # Build agent's specific H_t
+                agent_history = []
+                
+                for (cs_action,agent_action) in zip(cs_actions,agent_actions):
+
+                    # Build agent sublist for this timestep
+                    history_sublist = [-1 for x in range(self.group_size)]
+                    history_sublist[cs_gid] = cs_action
+                    history_sublist[l] = agent_action
+                    # example history_sublist: [cs_a1,a1,-1]
+
+                    # Append this timestep sublist to agent historys
+                    agent_history.append(history_sublist)
+
+                # Now update agent's group interaction history member variable
+                self.system.agents_list[l].set_group_interaction_history(agent_history)
+
+    def authenticate_local_agents(self):
+        """Have central server do mutual auth with other agents and store result."""
+
+        # Have each agent perform its individual auth process
+        for l in range(self.group_size):
+
+            self.system.agents_list[l].authenticate(
+                            self.system.agents_list[l].group_interaction_history, 
+                            self.max_interaction_length)
+
+            # Print results
+            #print("\nAgent auth results: ", self.system.agents_list[l].auth_results)
+
+    def setup_session_key(self):
+        """Have all agents create and set session key(s)."""
+
+        # Define variables
+        cs_gid = self.central_server_group_id
+
+        # Have each agent set own mutual keys (server may also make group key)
+        for l in range(self.group_size):
+            if l == cs_gid:
+                encrypted_group_keys_sublist = self.system.agents_list[l].local_setup_key()
+            else:
+                self.system.agents_list[l].local_setup_key()
+
+        # Reformat encrypted group keys list is its: [gk1_m1, gk2_m2] for example
+        encrypted_group_keys = [-1 for x in range(self.group_size)]
+        for l in range(self.group_size):
+            if l == cs_gid:
+                continue
+            else:
+                # Get next agent encrypted group key from sublist
+                encrypted_group_keys[l] = encrypted_group_keys_sublist.pop(0)
+
+        # now encrypted_group_keys is as: [-1,gk1_m1, gk2_m2] for example
+
+        # Have agents manually decrypt encrypted group keys from central server
+        if self.group_size > 2:
+
+            # Get group key from central server
+            group_key = self.system.agents_list[cs_gid].group_key
+
+            # Other agents decrypt their encrypted group key
+            for l in range(self.group_size):
+
+                if l == cs_gid:
+                    continue
+                else:
+                    # Group key encrypted by agent's mutual key
+                    group_key_encr = encrypted_group_keys[l]
+
+                    # Agent decrypts with its mutual key
+                    group_key = self.system.agents_list[l].decrypt_group_key(
+                                                                group_key_encr)
+                    # Agent sets the group key for itself
+                    self.system.agents_list[l].set_group_key(group_key)
+
+class DecentralizedLocalSystem(LocalSystem):
+    """Decentralized multi-agent system which lives on local machine."""
+
+    def __init__(self,system):
+         # Use parent constructor
+        super(DecentralizedLocalSystem, self).__init__(system)
+
+    def local_interaction(self):
+        """Perform interaction process among all agents locally."""
+
+        # Define variables
+        group_interaction_history = []
+        current_time = 0
+
+        # Build interaction history
+        while(current_time < self.max_interaction_length):
+
+            group_current_decisions = [-1 for x in range(self.group_size)]
+            # example group_current_decisions: [a0, a1, a2]
+
+            # Get current action from each agent
+            for l in range(self.group_size):
+
+                # Get sublist of group actions from previous timestep
+                if current_time == 0:
+                    group_prev_decisions = []
+                else:
+                    group_prev_decisions = group_interaction_history[-1][:] # shallow copy
+
+                # Get agent output from input: i.e. [a0,a1,a2]
+                agent_current_decision = self.system.agents_list[l].local_interact(
+                                                                    current_time,
+                                                                    group_prev_decisions)
+
+                # Update group current decisions with this agent action
+                group_current_decisions[l] = agent_current_decision
+
+            # Update group history with all agent actions for this timestep
+            group_interaction_history.append(group_current_decisions[:])
+
+            # Update time counter
+            current_time += 1
+
+        # After while loop, check group H_t
+        print("\ngroup_interaction_history: ", group_interaction_history)
+
+        # After interaction process, update each agent's personal history variable
+        for l in range(self.group_size):
+
+            # Every agents stores H_t as: [[a0,a1,a2],...]
+            self.system.agents_list[l].set_group_interaction_history(
+                                                    group_interaction_history)
+
+    def authenticate_local_agents(self):
+        """Have decentralized agents authenticate each other and store result."""
+
+        # Have each agent perform its individual auth process
+        for l in range(self.group_size):
+
+            self.system.agents_list[l].authenticate(
+                            self.system.agents_list[l].group_interaction_history, 
+                            self.max_interaction_length)
+
+            # Print results
+            #print("\nAgent auth results: ", self.system.agents_list[l].auth_results)
+
+    def setup_session_key(self):
+        """Have all agents create and set group session key."""
+
+        for l in range(self.group_size):
+            self.system.agents_list[l].local_setup_key()
+
 class RemoteSystem(object):
     """Single-agent system which lives on remote machine."""
 
@@ -100,7 +372,6 @@ class RemoteSystem(object):
         start_datetime = datetime.now()
 
         # Build interaction history by sending and receiving actions
-        #print("\nself.max_interaction_length: ", self.max_interaction_length)
         while(current_time < self.max_interaction_length):
             #print("\ncurrent_time: ", current_time)
 
@@ -123,7 +394,7 @@ class RemoteSystem(object):
             #print("\nGot from interact() the group_current_decisions: ", group_current_decisions)
             
             """
-            current_decisions is different for each type of system agent.
+            group_current_decisions is different for each type of system agent.
 
             Example for CentralizedSystemAgent at id=1: 
                 [cs_action, a1_action, -1]
@@ -170,7 +441,7 @@ class RemoteSystem(object):
                                 self.max_interaction_length, 
                                 agent_file)
         # Print results
-        print("\nAgent auth results: ", self.agent.auth_results)
+        #print("\nAgent auth results: ", self.agent.auth_results)
 
     def setup_session_key(self):
         """Have agent create and set session key(s)."""
@@ -222,7 +493,7 @@ class MultiAgentSystem(object):
         # Set variables
         self.group_size = group_size
         self.agents_list = -1
-        self.max_interaction_length = 50 # length of agent-to-agent interaction histories
+        self.max_interaction_length = 10 # length of agent-to-agent interaction histories
 
     def create_system_agents(self, group_size, agent_files, secrets_files):
         """Instantiate agents in the system."""
@@ -697,6 +968,9 @@ class CentralServerAgent(SystemAgent):
         # Set new variables
         self.is_central_server = info_dict['is_central_server']
         self.reuse_agent_model = info_dict['reuse_agent_model']
+        
+        if 'hypothesis_test' in info_dict['auth_method']:
+            self.alpha = info_dict['alpha']
 
         self.group_interaction_history = -1
         
@@ -851,6 +1125,30 @@ class CentralServerAgent(SystemAgent):
 
             print("\nself.sockets_list: ", self.sockets_list)
 
+    def local_interact(self,t,prev_actions):
+        """
+        Perform local interaction for this timestep.
+        
+        1. Get next action(s)
+        2. Update shared secret(s)
+
+        Args: 
+        t: current timestep in interaction process
+        prev_actions: sublist with group actions from previous timestep 
+        """
+        
+        # 1. Get next action from models, which also store their (action,dist)
+        own_actions_list = self.model_next_action(t, prev_actions)
+
+        # example own_actions_list: [-1, action_for_a1, action_for_a2]
+
+        # 2. Update shared secrets which store their own dists
+        self.secrets_next_action(t, prev_actions)
+
+        # return just own actions sublist for this timestep
+        return own_actions_list
+
+
     def interact(self, t, prev_actions, network_protocol):
         """
         Perform remote interaction for this timestep.
@@ -871,7 +1169,7 @@ class CentralServerAgent(SystemAgent):
         # example own_actions_list: [-1, action_for_a1, action_for_a2]
 
         # 2. Update shared secrets which store their own dists
-        #self.secrets_next_action(t, prev_actions)
+        self.secrets_next_action(t, prev_actions)
 
         # 3. Transmit own actions to other agents
         self.broadcast_actions(own_actions_list, t, network_protocol)
@@ -1075,7 +1373,7 @@ class CentralServerAgent(SystemAgent):
 
                 self.received_actions_list[l][msg_time] = int(msg_action)
 
-    def authenticate(self, group_history, max_history_len, agent_info_dict):
+    def authenticate(self, group_history, max_history_len): #, agent_info_dict):
         """Authenticate other agents in the group.
         
         Args: 
@@ -1091,7 +1389,7 @@ class CentralServerAgent(SystemAgent):
             if self.auth_method[l] == 'hypothesis_test':
                 
                 # Define variables
-                alpha = agent_info_dict['alpha']
+                alpha = self.alpha #agent_info_dict['alpha']
                 
                 # Get action of unknown agent from group history
                 unknown_agent_actions = [x[l] for x in group_history]
@@ -1225,7 +1523,7 @@ class CentralServerAgent(SystemAgent):
             
             # Create mutual key
             mutual_key = session_key_v1(input_histories_list)
-            print("\nmutual_key: ", mutual_key)
+            #print("\nmutual_key: ", mutual_key)
 
             # Record mutual key
             mutual_keys_list[l] = mutual_key
@@ -1252,7 +1550,7 @@ class CentralServerAgent(SystemAgent):
         all_histories_list = own_histories_list_trim[:] + agent_histories_list_trim[:]
 
         group_key = session_key_v1(all_histories_list)
-        print("\ngroup_key: ", group_key)
+        #print("\ngroup_key: ", group_key)
         
         # Return group key
         return group_key
@@ -1317,6 +1615,31 @@ class CentralServerAgent(SystemAgent):
         # Broadcast encrypted group keys 
         send_over_sockets(send_sock_list, encrypted_group_keys_str, network_protocol)
 
+    def local_setup_key(self):
+        """
+        1.Create mutual key for agent(s)
+        2. If group size more than 2 agents, create group key
+        2a. Create group key over all agents
+        2b. For each agent, encrypt group key with mutual key
+        """
+
+        # 1. Create and set mutual key for agent(s)
+        mutual_keys_list = self.create_mutual_keys()
+        self.set_mutual_keys_list(mutual_keys_list)
+
+        # If group size > 2, then create, set, and encrypt group key 
+        if self.group_size > 2:
+            # 2a. Create group key
+            group_key = self.create_group_key()
+
+            # Set group key
+            self.set_group_key(group_key)
+
+            # 2b. Encrypt group key by different mutual keys
+            encrypted_group_keys = self.encrypt_group_key(group_key)
+
+        return encrypted_group_keys
+
     def setup_key(self):
         """
         1.Create mutual key for agent(s)
@@ -1380,6 +1703,9 @@ class CentralizedSystemAgent(SystemAgent):
         self.is_central_server = info_dict['is_central_server']
         self.central_server_group_id = info_dict['central_server_group_id']
         self.reuse_agent_model = info_dict['reuse_agent_model']
+
+        if info_dict['auth_method'] == 'hypothesis_test':
+            self.alpha = info_dict['alpha']
 
         self.group_interaction_history = -1
 
@@ -1514,6 +1840,27 @@ class CentralizedSystemAgent(SystemAgent):
 
         print("\nself.sockets_list: ", self.sockets_list)
 
+    def local_interact(self, t, prev_actions):
+        """
+        Perform local interaction for this timestep.
+
+        1. Get next action(s)
+        2. Update shared secret(s) 
+
+        Args: 
+        t: current timestep in interaction process
+        prev_actions: sublist with group actions from previous timestep 
+        """
+        
+        # 1. Get next action from model, which also stores the (action,dist)
+        own_action = self.model_next_action(t, prev_actions)
+
+        # 2. Update shared secret which also stores the dist
+        self.secrets_next_action(t, prev_actions)
+
+        # Return just own action for this timestep
+        return own_action
+
 
     def interact(self, t, prev_actions, network_protocol):
         """
@@ -1536,7 +1883,7 @@ class CentralizedSystemAgent(SystemAgent):
         own_action = self.model_next_action(t, prev_actions)
 
         # 2. Update shared secret which also stores the dist
-        #self.secrets_next_action(t, prev_actions)
+        self.secrets_next_action(t, prev_actions)
 
         # 3. Transmit action to central server
         action_broadcast_list = [-1 for _ in range(self.group_size)]
@@ -1699,7 +2046,7 @@ class CentralizedSystemAgent(SystemAgent):
             self.received_actions_list[cs_gid][msg_time] = int(msg_action)
 
 
-    def authenticate(self, group_history, max_history_len, agent_info_dict):
+    def authenticate(self, group_history, max_history_len): #, agent_info_dict):
         """Authenticate the central server.
 
         Args:
@@ -1710,11 +2057,10 @@ class CentralizedSystemAgent(SystemAgent):
         # Define variables
         cs_gid = self.central_server_group_id
         
-
         # Run authentication test
-
         if self.auth_method == 'hypothesis_test':
-            alpha = agent_info_dict['alpha']
+
+            alpha = self.alpha #agent_info_dict['alpha']
 
             # Get action of unknown agent from group history
             unknown_agent_actions = [x[cs_gid] for x in group_history]
@@ -1774,7 +2120,7 @@ class CentralizedSystemAgent(SystemAgent):
 
         # Create mutual key
         mutual_key = session_key_v1(input_histories_list)
-        print("\nmutual_key: ", mutual_key)
+        #print("\nmutual_key: ", mutual_key)
 
         # Return mutual key
         return mutual_key
@@ -1818,10 +2164,17 @@ class CentralizedSystemAgent(SystemAgent):
 
         # Build ciphersuite from cipher key and decrypt group key
         group_key_decr = decrypt(cipher_key, ciphertext=group_key_encr)
-        print("\ngroup_key_decr: ", group_key_decr, " of type: ", type(group_key_decr))
 
         # Return decrypted group key
         return group_key_decr
+
+    def local_setup_key(self):
+        """Create mutual key."""
+
+        # Create and set mutual key
+        mutual_key = self.create_mutual_key()
+
+        self.set_mutual_key(mutual_key)
 
     def setup_key(self):
         """Create mutual key (and receive group key from central server)."""
@@ -1864,6 +2217,9 @@ class DecentralizedSystemAgent(SystemAgent):
 
         # Set new variables
         self.group_interaction_history = -1
+
+        if info_dict['auth_method'] == 'hypothesis_test':
+            self.alpha = info_dict['alpha']
 
         # Set agent model
         self.set_agent_model(info_dict, statedict_models)
@@ -2019,6 +2375,28 @@ class DecentralizedSystemAgent(SystemAgent):
 
             print("\nself.sockets_list: ", self.sockets_list)
 
+    def local_interact(self, t, prev_actions):
+        """
+        Perform local interaction for this timestep.
+
+        1. Get next action(s)
+        2. Update shared secret(s) 
+
+        Args: 
+        t: current timestep in interaction process
+        prev_actions: sublist with group actions from previous timestep 
+                    i.e. [a0_action, a1_action, a2_action]
+        """
+
+        # 1. Get next action, which model stores itself
+        own_action = self.model_next_action(t, prev_actions)
+
+        # 2. Update shared secrets, which will store their dists
+        self.secrets_next_action(t, prev_actions)
+
+        # Return just own action for this timestep
+        return own_action
+
     def interact(self, t, prev_actions, network_protocol):
         """
         Perform remote interaction for this timestep.
@@ -2040,7 +2418,7 @@ class DecentralizedSystemAgent(SystemAgent):
         #print("\nown_action: ", own_action)
 
         # 2. Update shared secrets, which will store their dists
-        #self.secrets_next_action(t, prev_actions)
+        self.secrets_next_action(t, prev_actions)
 
         # 3. Broadcast the same action to all other agents in group
         action_broadcast_list = [own_action for _ in range(self.group_size)]
@@ -2242,7 +2620,7 @@ class DecentralizedSystemAgent(SystemAgent):
 
                 self.received_actions_list[l][msg_time] = int(msg_action)
 
-    def authenticate(self, group_history, max_history_len, agent_info_dict):
+    def authenticate(self, group_history, max_history_len): #, agent_info_dict):
         """Authenticate other agents in the group.
 
         Args:
@@ -2258,7 +2636,7 @@ class DecentralizedSystemAgent(SystemAgent):
                     continue
 
                 # Define variables
-                alpha = agent_info_dict['alpha']
+                alpha = self.alpha #agent_info_dict['alpha']
                 
                 # Get action of unknown agent from group history
                 unknown_agent_actions = [x[l] for x in group_history]
@@ -2315,7 +2693,7 @@ class DecentralizedSystemAgent(SystemAgent):
 
         # Create group key (ordered by agent ID)
         group_key = session_key_v1(input_histories_list)
-        print("\ngroup_key: ", group_key)
+        #print("\ngroup_key: ", group_key)
 
         # Return group key
         return group_key
@@ -2332,6 +2710,16 @@ class DecentralizedSystemAgent(SystemAgent):
 
         # Set group key
         self.set_group_key(group_key)
+
+    def local_setup_key(self):
+        """Create and set group key for encryption/decryption."""
+
+        # Create group key
+        group_key = self.create_group_key()
+
+        # Set group key
+        self.set_group_key(group_key)
+
 
     def print_agent_model(self):
         """Print agent model."""

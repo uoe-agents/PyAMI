@@ -55,30 +55,36 @@ def run_agent():
     # Set up socket conn between this agent and other remote agents
     remote_system.connect_sockets(agent_info_json, network_protocol='tcp')
 
-    num_interactions = 1
+
+    num_interactions = 100
     elapsed_time_list, start_datetime_list, end_datetime_list = [], [], []
 
     for i in range(num_interactions):
         #print("\ni: ", i)
 
+        # Start datetime
+        start_datetime = datetime.now()
+
         # Perform interaction process with other remote agents
-        (elapsed_time, start_datetime, end_datetime) = remote_system.remote_interaction()
+        (_, _, _) = remote_system.remote_interaction()
         
-        elapsed_time_list.append(elapsed_time)
+        # Have agent authenticate other remote agents
+        remote_system.authenticate_remote_agents(agent_info_json)
+
+        # End datetime
+        end_datetime = datetime.now()
+
+        # Record time in lists
         start_datetime_list.append(datetime.strftime(start_datetime,'%Y-%m-%d %H:%M:%S:%f'))
         end_datetime_list.append(datetime.strftime(end_datetime,'%Y-%m-%d %H:%M:%S:%f'))
 
-    #avg_elapsed_time = statistics.mean(elapsed_time_list)
-    #print("\nAvg elapsed time over %d remote interactions: %0.4f" %(num_interactions,avg_elapsed_time))
 
-    print("\nelapsed_time_list: ", elapsed_time_list)
+    #sprint("\nelapsed_time_list: ", elapsed_time_list)
     print("\nstart_datetime_list: ", start_datetime_list)
     print("\nend_datetime_list: ", end_datetime_list)
 
-    return # REMOVE AFTER TIME TESTING
 
-    # Have agent authenticate other remote agents
-    remote_system.authenticate_remote_agents(agent_info_json)
+    #return # REMOVE AFTER TIME TESTING
 
     # Have agent generate session key(s)
     remote_system.setup_session_key()
