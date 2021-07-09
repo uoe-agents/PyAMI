@@ -1,6 +1,6 @@
 # PyAMI: System Prototype
 This repository is the official implementation of PyAMI for the paper: 
-**Quantum-Secure Authentication and Key Agreement via Abstract Multi-Agent Interaction**
+**Towards Quantum-Secure Authentication and Key Agreement via Abstract Multi-Agent Interaction**
 
 # Description
 The PyAMI project implements the AMI authentication and key generation protocol in a multi-agent system consisting of multiple virtual machines. It also has an option to run the multi-agent system instead entirely on a local machine if no remote machines are available.
